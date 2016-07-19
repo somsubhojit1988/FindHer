@@ -3,12 +3,16 @@ package com.example.subhojitsom.maprendering;
 import android.*;
 import android.Manifest;
 import android.annotation.TargetApi;
+import android.app.ActivityManager;
 import android.content.pm.PackageManager;
 import android.graphics.Point;
 import android.location.Location;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Handler;
+import android.os.HandlerThread;
+import android.os.Looper;
+import android.os.Message;
 import android.os.SystemClock;
 import android.support.annotation.NonNull;
 import android.support.annotation.Nullable;
@@ -25,7 +29,6 @@ import com.google.android.gms.appindexing.Action;
 import com.google.android.gms.appindexing.AppIndex;
 import com.google.android.gms.common.ConnectionResult;
 import com.google.android.gms.common.api.GoogleApiClient;
-import com.google.android.gms.location.LocationCallback;
 import com.google.android.gms.location.LocationRequest;
 import com.google.android.gms.location.LocationServices;
 import com.google.android.gms.maps.CameraUpdateFactory;
@@ -48,18 +51,30 @@ import java.util.Timer;
 
 
 public class MapsActivity extends FragmentActivity implements OnMapReadyCallback, GoogleApiClient.ConnectionCallbacks,
-        GoogleApiClient.OnConnectionFailedListener, LocationListener,LocationReceiver.LocationFeedListener,LocationTransmitter.LocationTransmitterListener {
+        GoogleApiClient.OnConnectionFailedListener,
+        LocationListener,LocationReceiver.LocationFeedListener,LocationTransmitter.LocationTransmitterListener {
     private static final int MY_PERMISSIONS_REQUEST_ACCESS_FINE_LOCATION = 1;
     private static final String TAG="MapActivity";
     private GoogleMap mMap = null;
     private GoogleApiClient mGoogleApiClient;
     private Location mLastLocation = null;
     private boolean markerAdded = false;
+    private boolean extLocMarker = false;
     private Marker mMarker = null;
-    private final String mServerUrl = "http://172.27.196.24:8080/MongoServlet/MongoServlet";
-    /*private FetchLocationTask mFetchTask;*/
-    private LocationReceiver mReceiver;
-    private Handler mHandler = new Handler();
+    private Marker extMarker = null;
+
+    public static final int QUIT_RECEIVING = 0;
+    public static final int  TRANSMIT_LOCATION = QUIT_RECEIVING +1;
+    public static final int  RECEIVE_LOCATION_UPDATE = QUIT_RECEIVING +2;
+
+    /*QUERY URL =>
+        http://172.27.196.19:8080/GeoLocationServlet/MongoServlet?retreive&nameId=collins.sam@tpvision.com
+    */
+
+
+    private final String mServerUrl = "http://172.27.196.19:8080/GeoLocationServlet/MongoServlet";
+    private HandlerThread mHandlerThread;
+    private LocRequestThread mLocThread;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -80,15 +95,10 @@ public class MapsActivity extends FragmentActivity implements OnMapReadyCallback
                     .addOnConnectionFailedListener(this)
                     .addApi(AppIndex.API).build();
         }
-     /*
-        this.fetchTimer = new Timer("Fetch frien's location timer");
-        this.fetchTimer.schedule(new FetchLocationTask(this,this.mServerUrl,"collins.sam@tpvision.com"),7000,10000);
-     */
-        /*this.mReceiver = new LocationReceiver(this.mServerUrl,this);*/
+        this.mHandlerThread = new HandlerThread("Location Fetcher thread");
+        this.mHandlerThread.start();
+        this.mLocThread = new LocRequestThread(mHandlerThread.getLooper(),this,mServerUrl+"?retreive&nameId=collins.sam@tpvision.com");
 
-        this.mReceiver.execute(this.mServerUrl);
-        /*this.mFetchTask = new FetchLocationTask(this,this.mServerUrl,"collins.sam@tpvision.com");*/
-        // Obtain the SupportMapFragment and get notified when the map is ready to be used.
         MapFragment mapFragment = (MapFragment) getFragmentManager().findFragmentById(R.id.map);
         mapFragment.getMapAsync(this);
     }
@@ -117,6 +127,7 @@ public class MapsActivity extends FragmentActivity implements OnMapReadyCallback
     protected void onDestroy() {
         if (mGoogleApiClient != null)
             mGoogleApiClient.disconnect();
+        this.mHandlerThread.quit();
         super.onDestroy();
 
     }
@@ -144,9 +155,6 @@ public class MapsActivity extends FragmentActivity implements OnMapReadyCallback
                     Log.e(TAG,"Location is NULL");
             }
         }
-
-        /*if(!this.isDestroyed())
-            this.mHandler.post(this.mFetchTask);*/
     }
 
     private LocationRequest createLocationRequest() {
@@ -200,18 +208,23 @@ public class MapsActivity extends FragmentActivity implements OnMapReadyCallback
         Log.d(TAG, "Will update Map [ Latitude :  " + mLastLocation.getLatitude() + " Longitude : " + mLastLocation.getLongitude() + "]");
         if (!markerAdded) {
             Toast.makeText(this.getApplicationContext(), "Updating map with my position", Toast.LENGTH_LONG).show();
-            mMap.moveCamera(CameraUpdateFactory.newLatLngZoom(mPos, 15));
+            mMap.moveCamera(CameraUpdateFactory.newLatLngZoom(mPos, 10));
             mMarker = mMap.addMarker(new MarkerOptions().position(mPos).title("This is my POSITION"));
             Log.d(TAG, "MY POSTION marker added");
             markerAdded = true;
         } else {
             if (mMarker != null) {
-                /*mMarker.remove();
-                mMarker =  mMap.addMarker(new MarkerOptions().position(mPos).title("This is my POSITION"));}*/
-                    animateMarker(mMarker, mPos, false);
+                    mMarker.remove();
+                    mMarker =  mMap.addMarker(new MarkerOptions().position(mPos).title("This is my POSITION"));
+               /* animateMarker(mMarker, mPos, false);*/
             }
-
         }
+        /*Posting message to fetch sam's  location for the 1st time*/
+        Message  msg = new Message();
+        msg.what = RECEIVE_LOCATION_UPDATE;
+        /*this.mLocThread.sendMessage(msg);*/
+        this.mLocThread.sendMessageDelayed(msg,7000);
+
     }
     private void animateMarker(final Marker marker, final LatLng toPosition,
                               final boolean hideMarker) {
@@ -265,21 +278,40 @@ public class MapsActivity extends FragmentActivity implements OnMapReadyCallback
         AppIndex.AppIndexApi.end(mGoogleApiClient, viewAction);
         mGoogleApiClient.disconnect();
     }
-    private void  updateMap(Location location){
-        Log.d(TAG,"Friend's location => long : " +location.getLongitude()+ " latitude : "+location.getLatitude());
-     /*   this.mReceiver = new LocationReceiver(this.mServerUrl,this);
-        this.mReceiver.execute(this.mServerUrl);*/
+    private void  updateMap(LatLng location){
+        Log.d(TAG,"MAP UPDATE<External_location> Latitude :"+location.latitude+" Longitude :" + location.longitude);
+        if (ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION)
+                != PackageManager.PERMISSION_GRANTED &&
+                ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) != PackageManager.PERMISSION_GRANTED &&
+                !mMap.isMyLocationEnabled()) {
+            Log.d(TAG, "Enabling Sam's location layer");
+            mMap.setMyLocationEnabled(true);
+        }
+        if (!this.extLocMarker) {
+            Toast.makeText(this.getApplicationContext(), "Updating map with external position feed", Toast.LENGTH_LONG).show();
+            mMap.moveCamera(CameraUpdateFactory.newLatLngZoom(location, 10));
+            this.extMarker = mMap.addMarker(new MarkerOptions().position(location).title("Sam Collin's position"));
+            Log.d(TAG, "Sam Collin's POSITION marker added");
+            this.extLocMarker = true;
+        } else {
+            if (extMarker != null) {
+     /*           animateMarker(extMarker, location, false);*/
+                this.extMarker.remove();
+                this.extMarker =  mMap.addMarker(new MarkerOptions().position(location).title("Sam Collin's position"));
+            }
+        }
+        Message  msg = new Message();
+        msg.what = RECEIVE_LOCATION_UPDATE;
+        this.mLocThread.sendMessageDelayed(msg,7000);
     }
     @Override
-    public void onLocationUpdated(Long longitude, Long latitude) {
-        Location newLocation = new Location("Friend's location");
-        newLocation.setLongitude(longitude);
-        newLocation.setLatitude(latitude);
-        updateMap(newLocation);
-
+    public void onLocationUpdated(Double longitude, Double latitude) {
+        Log.d(TAG,"Sam's Location update obtained=>");
+        LatLng extLoc = new LatLng(latitude,longitude);
+        updateMap(extLoc);
     }
     @Override
     public void onLocationTransmitted(LatLng loc) {
-        Log.d(TAG,"onLocationTransmitted_CALLBACK=> After transmitting location  "+loc.toString());
+        Log.d(TAG,"onLocationTransmitted_CALLBACK wil retreive friend's location ");
     }
 }
