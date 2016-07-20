@@ -45,7 +45,6 @@ public class LocationTransmitter extends AsyncTask<Location,Integer,String>{
                 return ret;
             }
         }
-
         Log.d(TAG,"Posting to LocationServer=====>"+newLocationPost);
         try {
             locServerUrl = new URL(newLocationPost);

@@ -31,24 +31,28 @@ import com.google.android.gms.common.ConnectionResult;
 import com.google.android.gms.common.api.GoogleApiClient;
 import com.google.android.gms.location.LocationRequest;
 import com.google.android.gms.location.LocationServices;
+import com.google.android.gms.maps.CameraUpdate;
 import com.google.android.gms.maps.CameraUpdateFactory;
 import com.google.android.gms.maps.GoogleMap;
 import com.google.android.gms.maps.MapFragment;
 import com.google.android.gms.maps.OnMapReadyCallback;
 import com.google.android.gms.maps.Projection;
 import com.google.android.gms.maps.model.LatLng;
+import com.google.android.gms.maps.model.LatLngBounds;
 import com.google.android.gms.maps.model.Marker;
 import com.google.android.gms.maps.model.MarkerOptions;
 
 import com.google.android.gms.location.LocationListener;
 
-import java.io.IOException;
+import java.io.IOException;/*
 import java.net.HttpURLConnection;
 import java.net.MalformedURLException;
 import java.net.ProtocolException;
 import java.net.URL;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Timer;
-
+*/
 
 public class MapsActivity extends FragmentActivity implements OnMapReadyCallback, GoogleApiClient.ConnectionCallbacks,
         GoogleApiClient.OnConnectionFailedListener,
@@ -67,12 +71,7 @@ public class MapsActivity extends FragmentActivity implements OnMapReadyCallback
     public static final int  TRANSMIT_LOCATION = QUIT_RECEIVING +1;
     public static final int  RECEIVE_LOCATION_UPDATE = QUIT_RECEIVING +2;
 
-    /*QUERY URL =>
-        http://172.27.196.19:8080/GeoLocationServlet/MongoServlet?retreive&nameId=collins.sam@tpvision.com
-    */
-
-
-    private final String mServerUrl = "http://172.27.196.19:8080/GeoLocationServlet/MongoServlet";
+    private final String mServerUrl = "http://192.168.0.135:8080/GeoLocationServlet/MongoServlet";
     private HandlerThread mHandlerThread;
     private LocRequestThread mLocThread;
 
@@ -98,11 +97,9 @@ public class MapsActivity extends FragmentActivity implements OnMapReadyCallback
         this.mHandlerThread = new HandlerThread("Location Fetcher thread");
         this.mHandlerThread.start();
         this.mLocThread = new LocRequestThread(mHandlerThread.getLooper(),this,mServerUrl+"?retreive&nameId=collins.sam@tpvision.com");
-
         MapFragment mapFragment = (MapFragment) getFragmentManager().findFragmentById(R.id.map);
         mapFragment.getMapAsync(this);
     }
-
     @Override
     public void onStart() {
         if (mGoogleApiClient != null)
@@ -134,8 +131,9 @@ public class MapsActivity extends FragmentActivity implements OnMapReadyCallback
     @Override
     public void onMapReady(GoogleMap googleMap) {
         mMap = googleMap;
-        /*http://172.27.196.24:8080/MongoServlet/MongoServlet?retreive&nameId=collins.sam@tpvision.com*/
-
+        Message  msg = new Message();
+        msg.what = RECEIVE_LOCATION_UPDATE;
+        this.mLocThread.sendMessageDelayed(msg,7000);
     }
     @TargetApi(Build.VERSION_CODES.JELLY_BEAN_MR1)
     @Override
@@ -149,12 +147,12 @@ public class MapsActivity extends FragmentActivity implements OnMapReadyCallback
                 mLastLocation = LocationServices.FusedLocationApi.getLastLocation(mGoogleApiClient);
                 if (mLastLocation != null) {
                     Log.d(TAG,"GoogleApiClient::onConnected->Will update map with location");
-                   /*Update the map*/
                     updateMap();
                 }else
                     Log.e(TAG,"Location is NULL");
             }
         }
+
     }
 
     private LocationRequest createLocationRequest() {
@@ -177,10 +175,6 @@ public class MapsActivity extends FragmentActivity implements OnMapReadyCallback
     public void onLocationChanged(Location location) {
         mLastLocation = location;
         if (mLastLocation != null&& mMap!=null) {
-         /*   Update the map*/
-            /*LatLng mPos = new LatLng(mLastLocation.getLatitude(), mLastLocation.getLongitude());
-            mMap.moveCamera(CameraUpdateFactory.newLatLngZoom(mPos, 15));
-           *//* mMap.addMarker(new MarkerOptions().position(mPos).title("This is my POSITION"));*/
             Log.d(TAG,"onLocationChanged->Will update map/LocationServer with location");
             updateMap();
             try {
@@ -196,7 +190,6 @@ public class MapsActivity extends FragmentActivity implements OnMapReadyCallback
 
     }
     private void updateMap() {
-
         if (ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION)
                 != PackageManager.PERMISSION_GRANTED &&
                 ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) != PackageManager.PERMISSION_GRANTED &&
@@ -205,27 +198,42 @@ public class MapsActivity extends FragmentActivity implements OnMapReadyCallback
             mMap.setMyLocationEnabled(true);
         }
         LatLng mPos = new LatLng(mLastLocation.getLatitude(), mLastLocation.getLongitude());
-        Log.d(TAG, "Will update Map [ Latitude :  " + mLastLocation.getLatitude() + " Longitude : " + mLastLocation.getLongitude() + "]");
-        if (!markerAdded) {
+        /*Log.d(TAG, "Will update Map [ Latitude :  " + mLastLocation.getLatitude() + " Longitude : " + mLastLocation.getLongitude() + "]");*/
+        if(!markerAdded){
             Toast.makeText(this.getApplicationContext(), "Updating map with my position", Toast.LENGTH_LONG).show();
-            mMap.moveCamera(CameraUpdateFactory.newLatLngZoom(mPos, 10));
+            mMap.moveCamera(CameraUpdateFactory.newLatLngZoom(mPos, 12));
             mMarker = mMap.addMarker(new MarkerOptions().position(mPos).title("This is my POSITION"));
-            Log.d(TAG, "MY POSTION marker added");
             markerAdded = true;
-        } else {
+        }else {
             if (mMarker != null) {
+                if(this.mMarker.getPosition().equals(mPos)){
+                    Log.d(TAG,"My new Location same as old location");
+                }else {
+                    Log.d(TAG,"Moving camera to new My location =>");
                     mMarker.remove();
                     mMarker =  mMap.addMarker(new MarkerOptions().position(mPos).title("This is my POSITION"));
-               /* animateMarker(mMarker, mPos, false);*/
+
+                }
             }
         }
-        /*Posting message to fetch sam's  location for the 1st time*/
-        Message  msg = new Message();
-        msg.what = RECEIVE_LOCATION_UPDATE;
-        /*this.mLocThread.sendMessage(msg);*/
-        this.mLocThread.sendMessageDelayed(msg,7000);
-
+        this.moveCamera();
     }
+    private void moveCamera(){
+        if(this.extLocMarker==false || this.markerAdded==false){
+            Log.w(TAG,"Need 2 locations to update the camera projection");
+            return;
+        }
+        LatLngBounds.Builder builder = new LatLngBounds.Builder();
+        if(this.mMarker!=null)builder.include(this.mMarker.getPosition());
+        if(this.extMarker!=null)builder.include(this.extMarker.getPosition());
+        LatLngBounds bounds = builder.build();
+        int width = getResources().getDisplayMetrics().widthPixels;
+        int height = getResources().getDisplayMetrics().heightPixels;
+        int padding = (int) (width * 0.10); // offset from edges of the map 12% of screen
+        CameraUpdate cu = CameraUpdateFactory.newLatLngBounds(bounds, width, height, padding);
+        this.mMap.animateCamera(cu);
+    }
+
     private void animateMarker(final Marker marker, final LatLng toPosition,
                               final boolean hideMarker) {
         final Handler handler = new Handler();
@@ -279,7 +287,6 @@ public class MapsActivity extends FragmentActivity implements OnMapReadyCallback
         mGoogleApiClient.disconnect();
     }
     private void  updateMap(LatLng location){
-        Log.d(TAG,"MAP UPDATE<External_location> Latitude :"+location.latitude+" Longitude :" + location.longitude);
         if (ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION)
                 != PackageManager.PERMISSION_GRANTED &&
                 ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) != PackageManager.PERMISSION_GRANTED &&
@@ -295,11 +302,16 @@ public class MapsActivity extends FragmentActivity implements OnMapReadyCallback
             this.extLocMarker = true;
         } else {
             if (extMarker != null) {
-     /*           animateMarker(extMarker, location, false);*/
-                this.extMarker.remove();
-                this.extMarker =  mMap.addMarker(new MarkerOptions().position(location).title("Sam Collin's position"));
+                if(this.extMarker.getPosition().equals(location)){
+                    Log.d(TAG,"SAM's new Location same as old location...");
+                }else{
+                    Log.d(TAG,"Moving camera to new Sam's location =>");
+                    this.extMarker.remove();
+                    this.extMarker =  mMap.addMarker(new MarkerOptions().position(location).title("Sam Collin's position"));
+                }
             }
         }
+        this.moveCamera();
         Message  msg = new Message();
         msg.what = RECEIVE_LOCATION_UPDATE;
         this.mLocThread.sendMessageDelayed(msg,7000);
